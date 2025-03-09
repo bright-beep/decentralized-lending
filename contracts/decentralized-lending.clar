@@ -234,3 +234,105 @@
         (ok true)
     )
 )
+
+;; Helper Functions
+
+;; Check if a position can be liquidated
+(define-private (can-liquidate (user principal) (borrow-amount uint) (collateral-amount uint))
+    (let
+        (
+            (collateral-ratio (calculate-collateral-ratio borrow-amount collateral-amount))
+        )
+        (<= collateral-ratio (var-get liquidation-threshold))
+    )
+)
+
+;; Calculate the collateral ratio for a position
+(define-private (calculate-collateral-ratio (borrow-amount uint) (collateral-amount uint))
+    (if (is-eq borrow-amount u0)
+        u0
+        (* (/ (* collateral-amount u10000) borrow-amount) u100)
+    )
+)
+
+;; Verify if collateral is sufficient for a borrow
+(define-private (is-collateral-sufficient (collateral-value uint) (borrow-value uint))
+    (>= (* collateral-value MIN-COLLATERAL-RATIO) (* borrow-value u100))
+)
+
+;; Calculate liquidation reward amount
+(define-private (calculate-liquidation-reward (liquidation-amount uint) (collateral-amount uint))
+    (let
+        (
+            (base-reward (* liquidation-amount u105))  ;; 5% bonus
+            (max-reward (* collateral-amount u50))     ;; Max 50% of collateral
+        )
+        (if (> base-reward max-reward)
+            max-reward
+            base-reward
+        )
+    )
+)
+
+;; Read-Only Functions
+
+;; Get user deposit information
+(define-read-only (get-user-deposits (user principal))
+    (default-to { amount: u0 } (map-get? user-deposits { user: user }))
+)
+
+;; Get user borrow information
+(define-read-only (get-user-borrows (user principal))
+    (default-to { amount: u0, collateral: u0 } (map-get? user-borrows { user: user }))
+)
+
+;; Get protocol statistics
+(define-read-only (get-protocol-stats)
+    {
+        total-deposits: (var-get total-deposits),
+        total-borrows: (var-get total-borrows),
+        interest-rate: (var-get interest-rate)
+    }
+)
+
+;; Administrative Functions
+
+;; Update protocol interest rate
+(define-public (set-interest-rate (new-rate uint))
+    (begin
+        (asserts! (is-contract-owner) ERR-NOT-AUTHORIZED)
+        (asserts! (and (>= new-rate MIN-INTEREST-RATE) (<= new-rate MAX-INTEREST-RATE)) ERR-INVALID-AMOUNT)
+        (var-set interest-rate new-rate)
+        (ok true)
+    )
+)
+
+;; Update liquidation threshold
+(define-public (set-liquidation-threshold (new-threshold uint))
+    (begin
+        (asserts! (is-contract-owner) ERR-NOT-AUTHORIZED)
+        (asserts! (and (>= new-threshold MIN-LIQUIDATION-THRESHOLD) 
+                      (<= new-threshold MAX-LIQUIDATION-THRESHOLD)) 
+                 ERR-INVALID-AMOUNT)
+        (var-set liquidation-threshold new-threshold)
+        (ok true)
+    )
+)
+
+;; Pause protocol operations
+(define-public (pause-protocol)
+    (begin
+        (asserts! (is-contract-owner) ERR-NOT-AUTHORIZED)
+        (var-set protocol-paused true)
+        (ok true)
+    )
+)
+
+;; Resume protocol operations
+(define-public (unpause-protocol)
+    (begin
+        (asserts! (is-contract-owner) ERR-NOT-AUTHORIZED)
+        (var-set protocol-paused false)
+        (ok true)
+    )
+)
