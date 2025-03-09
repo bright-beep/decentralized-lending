@@ -71,3 +71,82 @@
 (define-private (is-valid-token (token-contract <sip-010-trait>))
     (is-eq (contract-of token-contract) (var-get allowed-token))
 )
+
+;; Safe arithmetic operations
+(define-private (safe-subtract (a uint) (b uint))
+    (ok (if (>= a b) (- a b) u0))
+)
+
+(define-private (safe-add (a uint) (b uint))
+    (let ((sum (+ a b)))
+        (asserts! (>= sum a) (err u401))  ;; Check for overflow
+        (ok sum)
+    )
+)
+
+;; Safe multiplication with overflow check
+(define-private (safe-multiply (a uint) (b uint))
+    (let ((product (* a b)))
+        (asserts! (or (is-eq a u0) (is-eq (/ product a) b)) (err u402))  ;; Check for overflow
+        (ok product)
+    )
+)
+
+;; Core Protocol Functions
+
+;; Initialize the protocol with the specified token contract
+(define-public (initialize (token-contract <sip-010-trait>))
+    (begin
+        (asserts! (is-contract-owner) ERR-NOT-AUTHORIZED)
+        (ok true)
+    )
+)
+
+;; Deposit sBTC as collateral
+(define-public (deposit-collateral (token-contract <sip-010-trait>) (amount uint))
+    (let
+        (
+            (sender tx-sender)
+            (current-deposit (default-to { amount: u0 } (map-get? user-deposits { user: sender })))
+        )
+        (asserts! (> amount u0) ERR-INVALID-AMOUNT)
+        (asserts! (not (var-get protocol-paused)) ERR-NOT-INITIALIZED)
+        (asserts! (is-valid-token token-contract) ERR-NOT-AUTHORIZED)
+        
+        (match (contract-call? token-contract transfer amount sender (as-contract tx-sender) none)
+            success
+                (begin
+                    (map-set user-deposits
+                        { user: sender }
+                        { amount: (+ amount (get amount current-deposit)) }
+                    )
+                    (var-set total-deposits (+ (var-get total-deposits) amount))
+                    (ok true)
+                )
+            error (err u101)
+        )
+    )
+)
+
+;; Borrow against deposited collateral
+(define-public (borrow (token-contract <sip-010-trait>) (amount uint))
+    (let
+        (
+            (sender tx-sender)
+            (user-deposit (default-to { amount: u0 } (map-get? user-deposits { user: sender })))
+            (user-borrow (default-to { amount: u0, collateral: u0 } (map-get? user-borrows { user: sender })))
+            (collateral-value (get amount user-deposit))
+            (borrow-value (+ amount (get amount user-borrow)))
+        )
+        (asserts! (> amount u0) ERR-INVALID-AMOUNT)
+        (asserts! (not (var-get protocol-paused)) ERR-NOT-INITIALIZED)
+        (asserts! (is-collateral-sufficient collateral-value borrow-value) ERR-INSUFFICIENT-COLLATERAL)
+        
+        (map-set user-borrows
+            { user: sender }
+            { amount: borrow-value, collateral: collateral-value }
+        )
+        (var-set total-borrows (+ (var-get total-borrows) amount))
+        (ok true)
+    )
+)
